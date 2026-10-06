@@ -48,7 +48,7 @@ function stageForProgress(progress: number) {
 export default function FrameSequence() {
   const sectionRef = useRef<HTMLElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [progress, setProgress] = useState(0)
+  const [stage, setStage] = useState(0)
   const [loaded, setLoaded] = useState(0)
   const [ready, setReady] = useState(false)
   const [isReducedMotion, setIsReducedMotion] = useState(false)
@@ -62,6 +62,7 @@ export default function FrameSequence() {
   const drumTrackRef = useRef<HTMLDivElement>(null)
   const drumStageRef = useRef(0)
   const progressRef = useRef(0)
+  const stageRef = useRef(0)
   const snapshotRef = useRef<{ y: number; progress: number } | null>(null)
   const restoreRafRef = useRef<number | null>(null)
   const refreshAtRef = useRef(0)
@@ -106,6 +107,8 @@ export default function FrameSequence() {
         setLoaded(0)
         setReady(false)
         let complete = 0
+        let reportedPercent = -1
+        let coarseDone = false
         const load = (index: number) =>
           new Promise<void>((resolve) => {
             const image = images[index]
@@ -115,7 +118,16 @@ export default function FrameSequence() {
                 return
               }
               complete += 1
-              if (complete % 4 === 0 || complete === total) setLoaded(complete)
+              // The preloader lives only until the coarse pass lands, so report once
+              // per whole percent and stop after that: a state update past this point
+              // re-renders the whole section while the reader is scrolling through it.
+              if (!coarseDone) {
+                const percent = Math.round((complete / total) * 100)
+                if (percent !== reportedPercent) {
+                  reportedPercent = percent
+                  setLoaded(complete)
+                }
+              }
               resolve()
             }
             image.onload = settle
@@ -143,6 +155,7 @@ export default function FrameSequence() {
         void (async () => {
           await run(coarse, COARSE_CONCURRENCY)
           if (loadTokenRef.current !== token) return
+          coarseDone = true
           setReady(true)
           await run(fine, FINE_CONCURRENCY)
         })()
@@ -229,7 +242,9 @@ export default function FrameSequence() {
     const initialProgress = isReducedMotion ? 1 : progressAtCurrentScroll()
     progressRef.current = initialProgress
     targetFrameRef.current = Math.round(initialProgress * (total - 1))
-    setProgress(initialProgress)
+    const initialStage = stageForProgress(initialProgress)
+    stageRef.current = initialStage
+    setStage(initialStage)
     drawRef.current(targetFrameRef.current)
     if (isReducedMotion) return
 
@@ -247,8 +262,15 @@ export default function FrameSequence() {
         if (Math.abs(progressAtCurrentScroll() - self.progress) > 0.05) return
         const nextProgress = self.progress
         progressRef.current = nextProgress
-        setProgress(nextProgress)
         targetFrameRef.current = Math.round(nextProgress * (total - 1))
+        // Continuous progress drives only the canvas; the DOM reads the discrete
+        // stage. Keeping progress in a ref keeps the section to roughly five renders
+        // per pass instead of one per scroll frame - the bulk of the mobile cost.
+        const nextStage = stageForProgress(nextProgress)
+        if (nextStage !== stageRef.current) {
+          stageRef.current = nextStage
+          setStage(nextStage)
+        }
         if (rafRef.current === null) {
           rafRef.current = requestAnimationFrame(() => {
             rafRef.current = null
@@ -310,16 +332,18 @@ export default function FrameSequence() {
     }
   }, [])
 
-  const stage = stageForProgress(progress)
-
   useEffect(() => {
     const track = drumTrackRef.current
     if (!track) return
     const offset = -(stage * 100) / stageLabels.length
     const previous = drumStageRef.current
     drumStageRef.current = stage
+    // A blur tween (and even an inline blur(0px), which still spawns a filter layer)
+    // is one of the costliest things to ask of a phone GPU, so the drum keeps its
+    // slide on phones and only the desktop gets the focus pull.
+    const focusPull = !window.matchMedia('(max-width: 767px)').matches
     if (previous === stage) {
-      gsap.set(track, { yPercent: offset, filter: 'blur(0px)' })
+      gsap.set(track, focusPull ? { yPercent: offset, filter: 'blur(0px)' } : { yPercent: offset })
       return
     }
     gsap.killTweensOf(track)
@@ -328,7 +352,9 @@ export default function FrameSequence() {
       duration: 0.55,
       ease: stage === 0 ? 'power3.out' : 'back.out(1.4)',
     })
-    gsap.fromTo(track, { filter: 'blur(3px)' }, { filter: 'blur(0px)', duration: 0.55, ease: 'power2.out' })
+    if (focusPull) {
+      gsap.fromTo(track, { filter: 'blur(3px)' }, { filter: 'blur(0px)', duration: 0.55, ease: 'power2.out' })
+    }
   }, [stage])
 
   const percentage = Math.round((loaded / framesIn(frameSet)) * 100)

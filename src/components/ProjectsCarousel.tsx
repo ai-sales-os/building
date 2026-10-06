@@ -39,6 +39,8 @@ export default function ProjectsCarousel() {
   const snapTimerRef = useRef<number | null>(null)
   const reducedMotionRef = useRef(false)
   const paddingLeftRef = useRef(0)
+  const cardCentersRef = useRef<number[]>([])
+  const visibleRef = useRef(true)
   const [activeIndex, setActiveIndex] = useState(0)
 
   useLayoutEffect(() => {
@@ -65,12 +67,14 @@ export default function ProjectsCarousel() {
       const viewportCenter = viewport.clientWidth / 2
       const step = stepRef.current || 1
       track.style.transform = `translate3d(${positionRef.current}px, 0, 0)`
-      cards.forEach((card) => {
+      cards.forEach((card, index) => {
         // Card offsets are measured from the track, but the track itself starts at
         // the viewport's content box — so the left padding must be added to know
         // where the card actually sits inside the viewport (same term recalculate()
-        // subtracts when centring).
-        const center = paddingLeftRef.current + positionRef.current + card.offsetLeft + card.offsetWidth / 2
+        // subtracts when centring). The per-card centre inside the track is cached at
+        // layout time rather than read here: offsetLeft forces a reflow and this loop
+        // runs on every animation frame.
+        const center = paddingLeftRef.current + positionRef.current + (cardCentersRef.current[index] ?? 0)
         const distance = Math.abs(center - viewportCenter) / step
         const intensity = Math.max(0, 1 - Math.min(distance, 1))
         card.style.setProperty('--project-scale', (0.9 + intensity * 0.1).toFixed(3))
@@ -98,7 +102,9 @@ export default function ProjectsCarousel() {
       }
 
       render()
-      rafRef.current = requestAnimationFrame(frame)
+      // Parking the loop while the carousel is off-screen keeps a permanent
+      // per-frame style write off the main thread on the way down the page.
+      rafRef.current = visibleRef.current ? requestAnimationFrame(frame) : null
     }
     const startFrame = () => {
       if (rafRef.current === null) rafRef.current = requestAnimationFrame(frame)
@@ -114,6 +120,7 @@ export default function ProjectsCarousel() {
       // horizontal padding is what displaces the first card from the centre.
       const paddingLeft = parseFloat(getComputedStyle(viewport).paddingLeft) || 0
       paddingLeftRef.current = paddingLeft
+      cardCentersRef.current = cards.map((card) => card.offsetLeft + card.offsetWidth / 2)
       const centeredPosition = viewport.clientWidth / 2 - paddingLeft - first.offsetLeft - first.offsetWidth / 2
       stepRef.current = step
       minPositionRef.current = centeredPosition
@@ -205,6 +212,16 @@ export default function ProjectsCarousel() {
         render()
       }
     }
+    // The frame loop rewrites card styles continuously, so idle it whenever the
+    // carousel is out of view and wake it again on the way back.
+    const visibility = new IntersectionObserver(
+      ([entry]) => {
+        visibleRef.current = Boolean(entry?.isIntersecting)
+        if (visibleRef.current) startFrame()
+      },
+      { rootMargin: '40% 0px' },
+    )
+    visibility.observe(viewport)
     const resizeObserver = new ResizeObserver(recalculate)
     resizeObserver.observe(viewport)
     window.addEventListener('resize', recalculate)
@@ -219,6 +236,7 @@ export default function ProjectsCarousel() {
 
     return () => {
       clearSnapTimer()
+      visibility.disconnect()
       resizeObserver.disconnect()
       window.removeEventListener('resize', recalculate)
       viewport.removeEventListener('pointerdown', onPointerDown)

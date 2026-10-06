@@ -16,13 +16,18 @@ export default function SmoothScroll() {
   useEffect(() => {
     if (isReducedMotion()) return
 
+    // Touch scrolling stays the browser's own. Virtualising it (syncTouch) takes the
+    // page off the native scroller and replays every frame from JavaScript, which both
+    // decouples the content from the finger and keeps the main thread busy - inside a
+    // mobile WebView, Telegram's in-app browser in particular, that shows up as the
+    // first section seizing up. ScrollTrigger follows the native scroller just as well,
+    // and the wheel keeps its smoothing on desktop.
     const lenis = new Lenis({
       autoRaf: false,
       duration: MOTION.duration.slow,
       easing: MOTION.lenisEasing,
       smoothWheel: true,
-      syncTouch: true,
-      touchMultiplier: 1,
+      syncTouch: false,
       anchors: false,
       respectReducedMotion: true,
     })

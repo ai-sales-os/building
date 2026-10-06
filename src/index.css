@@ -1,4 +1,40 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
+/* Self-hosted fonts. A remote @import here put fonts.googleapis.com in the critical
+   render path: the browser cannot finish parsing this stylesheet until that CSS
+   answers, so on a slow or filtered mobile network - and inside in-app browsers
+   such as Telegram's - the whole page sat blank while it waited. Local files with
+   font-display: swap remove that dependency and paint immediately. */
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/fraunces-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-cyrillic-ext.woff2') format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
 
 :root {
   --color-wood-primary: #C48A4E;
@@ -45,11 +81,11 @@ button { cursor: pointer; }
 
 .site-shell { overflow: clip; }
 
-[data-reveal] [data-reveal-item], [data-reveal-heading] .eyebrow {
-  will-change: transform, opacity;
-}
+/* will-change is deliberately not set here: it used to sit on every reveal item for
+   the life of the page, promoting a compositor layer per element. GSAP applies it
+   for the duration of each tween, which is all the reveal needs. */
 [data-reveal-line] { display: block; overflow: clip; overflow-clip-margin: 0.24em; }
-.heading-line__inner { display: inline-block; will-change: transform, opacity; }
+.heading-line__inner { display: inline-block; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -108,7 +144,7 @@ button { cursor: pointer; }
    into the window. `width: max-content` keeps each title on a single line: a wrapped title would double the
    row's ink height and bleed a whole second line into the window. */
 .sequence__drum { height: var(--sequence-drum-line); margin: 18px 0 14px; overflow: hidden; position: relative; width: max-content; }
-.sequence__drum-track { will-change: transform, filter; }
+.sequence__drum-track { will-change: transform; }
 .sequence__drum-item { align-items: center; display: flex; font-family: var(--font-display); font-size: var(--sequence-drum-font); font-weight: 500; height: var(--sequence-drum-line); letter-spacing: -.04em; line-height: var(--sequence-drum-line); white-space: nowrap; width: max-content; }
 .sequence__copy p { font-size: 16px; line-height: 1.5; margin: 0; max-width: 340px; }
 .sequence__copy .eyebrow { color: var(--color-wood-highlight); font-size: 18px; }
@@ -236,7 +272,21 @@ button { cursor: pointer; }
   /* On phones the frame sequence is a horizontal 16:9 band on the light page with the
      stage text underneath, not a full-screen cropped canvas. */
   .sequence { height: 680vh; }
-  .sequence__sticky { background: var(--color-cream); display: flex; flex-direction: column; justify-content: center; }
+  /* The space above the band and below the stage text used to be a flat slab of cream
+     that met the next section on a hard tonal edge. A warm wash at the top and bottom
+     gives the block depth, and the bottom wash is carried across the boundary so the
+     frame section and the About section below it blend into each other. It is painted
+     as the sticky block's own background so it always sits behind the band and text. */
+  .sequence__sticky {
+    background:
+      linear-gradient(180deg, rgba(196, 138, 78, .16), rgba(196, 138, 78, 0) 26%),
+      linear-gradient(0deg, rgba(196, 138, 78, .20), rgba(196, 138, 78, 0) 40%),
+      var(--color-cream);
+    display: flex;
+    flex-direction: column;
+    height: 100svh;
+    justify-content: center;
+  }
   .sequence__canvas { aspect-ratio: 16 / 9; display: block; height: auto; inset: auto; margin-inline: auto; position: static; width: min(100%, calc(42vh * 16 / 9)); }
   .sequence__scrim { display: none; }
   .sequence__preloader { align-items: center; color: var(--color-ink); padding: 0 24px; text-align: center; }
@@ -254,6 +304,9 @@ button { cursor: pointer; }
   .section { padding: 72px 24px; }
   .section-intro h2 { font-size: 44px; }
   .about, .advantages, .contact { display: block; min-height: 0; }
+  /* Picks up the warm wash the frame block ends on, so the two meet in a blend rather
+     than a seam. */
+  .about { background: linear-gradient(180deg, rgba(196, 138, 78, .20), rgba(196, 138, 78, 0) 200px); }
   .about__body { margin-top: 56px; }
   .about__body .lead { font-size: 24px; }
   .advantages { padding: 0; }
@@ -277,7 +330,7 @@ button { cursor: pointer; }
   .projects__heading > p { margin-top: 24px; }
   .projects__viewport { padding: 20px 24px 40px; }
   .projects__track { gap: 12px; }
-  .project-card { aspect-ratio: .78; flex-basis: min(78vw, 320px); }
+  .project-card { aspect-ratio: .78; filter: none; flex-basis: min(78vw, 320px); will-change: transform, opacity; }
   .project-card__placeholder { inset: 18px; }
   .project-card__info { inset: auto 18px 18px; }
   .projects__arrow { height: 38px; width: 38px; }

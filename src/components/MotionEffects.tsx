@@ -66,6 +66,12 @@ export default function MotionEffects({ scope }: MotionEffectsProps) {
         })
       })
 
+    })
+
+    // The magnetic pull is a mouse affordance. On a touch screen pointermove fires all
+    // through a drag, so every link under the finger would spin up quickTo tweens on
+    // each move - constant animation work for an effect that cannot be seen.
+    media.add('(prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine)', () => {
       const magneticElements = gsap.utils.toArray<HTMLElement>('[data-magnetic]', root)
       const cleanups = magneticElements.map((element) => {
         const strength = Number(element.dataset.magnetic) || 0.18
