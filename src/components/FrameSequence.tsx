@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import gsap from 'gsap'
-import { ScrollTrigger } from 'gsap/ScrollTrigger'
-import { scrollPageTo } from '../lib/scroll'
 import '../index.css'
-
-gsap.registerPlugin(ScrollTrigger)
 
 const desktopFrames = 289
 const mobileFrames = 289
@@ -13,8 +9,11 @@ const mobileFrames = 289
 // a frame to show, then the remaining frames fill in while the reader scrolls. The
 // desktop frames are far larger, so they are spread thinner before the section opens.
 const COARSE_CONCURRENCY = 6
-const FINE_CONCURRENCY = 6
+const FINE_CONCURRENCY = 4
 const COARSE_STRIDE = { desktop: 16, mobile: 8 } as const
+// A frame that never settles must not keep the whole section behind the preloader:
+// after this long the sequence opens with whatever has arrived and fills in later.
+const COARSE_TIMEOUT = 9000
 
 // The mobile sets are downscaled copies of the same render, so they share the
 // desktop timeline and the same normalized progress thresholds.
@@ -56,16 +55,20 @@ export default function FrameSequence() {
   const framesRef = useRef<HTMLImageElement[]>([])
   const currentFrameRef = useRef(-1)
   const targetFrameRef = useRef(0)
-  const rafRef = useRef<number | null>(null)
   const loadTokenRef = useRef(0)
+  const paintRafRef = useRef<number | null>(null)
+  const paintTimerRef = useRef<number | null>(null)
+  // The canvas' CSS box, cached: reading clientWidth on the way down a scroll forces a
+  // synchronous layout of the whole page, because the sticky block has just moved.
+  const canvasSizeRef = useRef({ width: 0, height: 0 })
   const drawRef = useRef<(index: number) => void>(() => undefined)
   const drumTrackRef = useRef<HTMLDivElement>(null)
   const drumStageRef = useRef(0)
-  const progressRef = useRef(0)
   const stageRef = useRef(0)
-  const snapshotRef = useRef<{ y: number; progress: number } | null>(null)
-  const restoreRafRef = useRef<number | null>(null)
-  const refreshAtRef = useRef(0)
+  const visibleRef = useRef(true)
+  // The section's document offset and height, re-read on resize only: the scroll
+  // handler must not touch layout, or every frame of a scroll pays for a reflow.
+  const geometryRef = useRef({ top: 0, height: 0 })
 
   // Phones get the downscaled copy of the same render; desktop gets the full set.
   const frameSet: FrameSet = isMobile ? 'mobile' : 'desktop'
@@ -91,6 +94,7 @@ export default function FrameSequence() {
     loadTokenRef.current = token
     const set = frameSet
     const total = framesIn(set)
+    let timer: number | null = null
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (!entry?.isIntersecting) return
@@ -152,6 +156,13 @@ export default function FrameSequence() {
         const coarseSet = new Set(coarse)
         const fine: number[] = []
         for (let index = 0; index < total; index += 1) if (!coarseSet.has(index)) fine.push(index)
+        // Whatever the network does, the section opens on time: the coarse frames that
+        // did arrive are enough to scrub with, and the rest keep filling in behind.
+        timer = window.setTimeout(() => {
+          if (loadTokenRef.current !== token || coarseDone) return
+          coarseDone = true
+          setReady(true)
+        }, COARSE_TIMEOUT)
         void (async () => {
           await run(coarse, COARSE_CONCURRENCY)
           if (loadTokenRef.current !== token) return
@@ -165,6 +176,7 @@ export default function FrameSequence() {
     observer.observe(section)
     return () => {
       observer.disconnect()
+      if (timer !== null) window.clearTimeout(timer)
       loadTokenRef.current += 1
     }
   }, [frameSet])
@@ -196,8 +208,9 @@ export default function FrameSequence() {
         image = frames[bestIndex]
       }
       const dpr = Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2)
-      const width = canvas.clientWidth
-      const height = canvas.clientHeight
+      const cached = canvasSizeRef.current
+      const width = cached.width || canvas.clientWidth
+      const height = cached.height || canvas.clientHeight
       const pixelWidth = Math.round(width * dpr)
       const pixelHeight = Math.round(height * dpr)
       if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
@@ -214,9 +227,14 @@ export default function FrameSequence() {
       currentFrameRef.current = index
     }
     drawRef.current = draw
+    const measureCanvas = () => {
+      canvasSizeRef.current = { width: canvas.clientWidth, height: canvas.clientHeight }
+    }
     const resize = () => {
+      measureCanvas()
       if (ready) draw(targetFrameRef.current)
     }
+    measureCanvas()
     const resizeObserver = new ResizeObserver(resize)
     resizeObserver.observe(canvas)
     window.addEventListener('resize', resize)
@@ -226,111 +244,100 @@ export default function FrameSequence() {
     }
   }, [isMobile, ready])
 
+  // The frame the section shows is a pure function of how far it has been scrolled, so
+  // it is read straight off the scroll position rather than through ScrollTrigger. That
+  // removes a long chain - the scroller proxy, the refresh/restore pass, the gsap ticker
+  // that drives scrub - every link of which behaves differently inside an in-app WebView.
   useEffect(() => {
     if (!ready) return
     const section = sectionRef.current
     if (!section) return
     const total = framesIn(frameSet)
-    // A breakpoint change rebuilds this trigger, so read the frame back from the
-    // current scroll position instead of assuming the section starts at frame one.
-    const progressAtCurrentScroll = () => {
-      const span = section.offsetHeight - window.innerHeight
-      if (span <= 0) return 0
+
+    const measure = () => {
       const rect = section.getBoundingClientRect()
-      return Math.min(1, Math.max(0, -rect.top / span))
+      geometryRef.current = { top: rect.top + window.scrollY, height: rect.height }
     }
-    const initialProgress = isReducedMotion ? 1 : progressAtCurrentScroll()
-    progressRef.current = initialProgress
-    targetFrameRef.current = Math.round(initialProgress * (total - 1))
-    const initialStage = stageForProgress(initialProgress)
-    stageRef.current = initialStage
-    setStage(initialStage)
-    drawRef.current(targetFrameRef.current)
-    if (isReducedMotion) return
-
-    const trigger = ScrollTrigger.create({
-      trigger: section,
-      start: 'top top',
-      end: 'bottom bottom',
-      scrub: true,
-      onUpdate: (self) => {
-        // Skip the transient position ScrollTrigger applies while it re-measures.
-        if (refreshAtRef.current !== 0 && performance.now() - refreshAtRef.current < 250) return
-        // Mid-resize the trigger still measures the previous layout, so its progress
-        // is meaningless until the next refresh. Ignoring it keeps the last real
-        // reading, which is what the restore after the refresh relies on.
-        if (Math.abs(progressAtCurrentScroll() - self.progress) > 0.05) return
-        const nextProgress = self.progress
-        progressRef.current = nextProgress
-        targetFrameRef.current = Math.round(nextProgress * (total - 1))
-        // Continuous progress drives only the canvas; the DOM reads the discrete
-        // stage. Keeping progress in a ref keeps the section to roughly five renders
-        // per pass instead of one per scroll frame - the bulk of the mobile cost.
-        const nextStage = stageForProgress(nextProgress)
-        if (nextStage !== stageRef.current) {
-          stageRef.current = nextStage
-          setStage(nextStage)
-        }
-        if (rafRef.current === null) {
-          rafRef.current = requestAnimationFrame(() => {
-            rafRef.current = null
-            if (targetFrameRef.current !== currentFrameRef.current) {
-              drawRef.current(targetFrameRef.current)
-            }
-          })
-        }
-      },
-    })
-    return () => {
-      trigger.kill()
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+    const progressNow = () => {
+      const { top, height } = geometryRef.current
+      const span = height - window.innerHeight
+      if (span <= 0) return 0
+      return Math.min(1, Math.max(0, (window.scrollY - top) / span))
     }
-  }, [frameSet, isReducedMotion, ready])
-
-  // ScrollTrigger.refresh() parks the page at the top while it re-measures, and
-  // every orientation/breakpoint change triggers one. Put the reader back where
-  // they were so the sequence keeps playing from the same stage.
-  useEffect(() => {
-    const onRefreshInit = () => {
-      refreshAtRef.current = performance.now()
-      // A refresh that already starts from the top must not erase a good snapshot,
-      // otherwise a second refresh in the same resize would restore nothing.
-      if (window.scrollY > 0) {
-        snapshotRef.current = { y: window.scrollY, progress: progressRef.current }
+    const paint = () => {
+      if (paintRafRef.current !== null) {
+        cancelAnimationFrame(paintRafRef.current)
+        paintRafRef.current = null
+      }
+      if (paintTimerRef.current !== null) {
+        window.clearTimeout(paintTimerRef.current)
+        paintTimerRef.current = null
+      }
+      if (visibleRef.current && targetFrameRef.current !== currentFrameRef.current) {
+        drawRef.current(targetFrameRef.current)
       }
     }
-    const onRefresh = () => {
-      if (restoreRafRef.current !== null) cancelAnimationFrame(restoreRafRef.current)
-      restoreRafRef.current = requestAnimationFrame(() => {
-        restoreRafRef.current = null
-        const snapshot = snapshotRef.current
-        if (!snapshot || snapshot.y <= 0) return
-        snapshotRef.current = null
-        if (Math.abs(window.scrollY - snapshot.y) <= 2) return
-        const section = sectionRef.current
-        let target = snapshot.y
-        if (section && snapshot.progress > 0.001 && snapshot.progress < 0.999) {
-          const span = section.offsetHeight - window.innerHeight
-          if (span > 0) {
-            const top = section.getBoundingClientRect().top + window.scrollY
-            target = top + snapshot.progress * span
-          }
-        }
-        target = Math.max(0, Math.min(target, ScrollTrigger.maxScroll(window)))
-        // Release the guard before moving, so the resulting update is not skipped.
-        refreshAtRef.current = 0
-        scrollPageTo(target)
-        ScrollTrigger.update()
-      })
+    // One paint per animation frame, but never *only* on a rAF: inside an in-app WebView
+    // (Telegram's is the one that was reported) rAF can be throttled while a finger is
+    // down, which left the frame frozen at the stage the reader first touched while the
+    // page itself kept scrolling underneath. The timer is the guarantee.
+    const schedulePaint = () => {
+      if (paintRafRef.current !== null || paintTimerRef.current !== null) return
+      paintRafRef.current = requestAnimationFrame(paint)
+      paintTimerRef.current = window.setTimeout(paint, 48)
     }
-    ScrollTrigger.addEventListener('refreshInit', onRefreshInit)
-    ScrollTrigger.addEventListener('refresh', onRefresh)
+    const apply = (progress: number) => {
+      targetFrameRef.current = Math.round(progress * (total - 1))
+      // Continuous progress drives only the canvas; the DOM reads the discrete stage,
+      // so the section re-renders about five times per pass instead of once per frame.
+      const nextStage = stageForProgress(progress)
+      if (nextStage !== stageRef.current) {
+        stageRef.current = nextStage
+        setStage(nextStage)
+      }
+      schedulePaint()
+    }
+    const onScroll = () => apply(progressNow())
+    const onResize = () => {
+      measure()
+      apply(progressNow())
+    }
+
+    measure()
+    if (isReducedMotion) {
+      apply(1)
+      return
+    }
+    apply(progressNow())
+
+    const visibility = new IntersectionObserver(
+      ([entry]) => {
+        visibleRef.current = Boolean(entry?.isIntersecting)
+        if (visibleRef.current) apply(progressNow())
+      },
+      { rootMargin: '40% 0px' },
+    )
+    visibility.observe(section)
+    const resizeObserver = new ResizeObserver(onResize)
+    resizeObserver.observe(section)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onResize)
+    // Late layout shifts (fonts, the carousel's own resize pass) move the section
+    // without a resize event, so re-measure once the page has settled.
+    const settle = window.setTimeout(onResize, 800)
+
     return () => {
-      ScrollTrigger.removeEventListener('refreshInit', onRefreshInit)
-      ScrollTrigger.removeEventListener('refresh', onRefresh)
-      if (restoreRafRef.current !== null) cancelAnimationFrame(restoreRafRef.current)
+      visibility.disconnect()
+      resizeObserver.disconnect()
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onResize)
+      window.clearTimeout(settle)
+      if (paintRafRef.current !== null) cancelAnimationFrame(paintRafRef.current)
+      if (paintTimerRef.current !== null) window.clearTimeout(paintTimerRef.current)
+      paintRafRef.current = null
+      paintTimerRef.current = null
     }
-  }, [])
+  }, [frameSet, isReducedMotion, ready])
 
   useEffect(() => {
     const track = drumTrackRef.current
