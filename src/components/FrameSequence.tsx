@@ -9,7 +9,14 @@ gsap.registerPlugin(ScrollTrigger)
 const desktopFrames = 289
 const mobileFrames = 289
 
-// The mobile set is a downscaled copy of the same render, so it shares the
+// How the frame series is loaded: a coarse pass first so every scroll position has
+// a frame to show, then the remaining frames fill in while the reader scrolls. The
+// desktop frames are far larger, so they are spread thinner before the section opens.
+const COARSE_CONCURRENCY = 6
+const FINE_CONCURRENCY = 6
+const COARSE_STRIDE = { desktop: 16, mobile: 8 } as const
+
+// The mobile sets are downscaled copies of the same render, so they share the
 // desktop timeline and the same normalized progress thresholds.
 const stageBoundaries = [0, 22 / 289, 68 / 289, 140 / 289, 205 / 289, 1]
 const stageLabels = [
@@ -20,9 +27,15 @@ const stageLabels = [
   { title: 'Готовый дом', detail: 'Ландшафт, освещение, финальный вид' },
 ]
 
-function frameSrc(index: number, mobile: boolean) {
+type FrameSet = 'desktop' | 'mobile'
+
+function frameSrc(index: number, set: FrameSet) {
   const number = String(index + 1).padStart(4, '0')
-  return `/frames/${mobile ? 'mobile' : 'desktop'}/frame_${number}.webp`
+  return `/frames/${set}/frame_${number}.webp`
+}
+
+function framesIn(set: FrameSet) {
+  return set === 'desktop' ? desktopFrames : mobileFrames
 }
 
 function stageForProgress(progress: number) {
@@ -53,6 +66,9 @@ export default function FrameSequence() {
   const restoreRafRef = useRef<number | null>(null)
   const refreshAtRef = useRef(0)
 
+  // Phones get the downscaled copy of the same render; desktop gets the full set.
+  const frameSet: FrameSet = isMobile ? 'mobile' : 'desktop'
+
   useEffect(() => {
     const media = window.matchMedia('(max-width: 767px)')
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -72,36 +88,64 @@ export default function FrameSequence() {
     if (!section) return
     const token = loadTokenRef.current + 1
     loadTokenRef.current = token
+    const set = frameSet
+    const total = framesIn(set)
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (!entry?.isIntersecting) return
         observer.disconnect()
-        const total = isMobile ? mobileFrames : desktopFrames
-        const images: HTMLImageElement[] = []
-        let complete = 0
-        setLoaded(0)
-        setReady(false)
-        framesRef.current = []
+        const images: HTMLImageElement[] = new Array(total)
         for (let index = 0; index < total; index += 1) {
           const image = new Image()
           image.decoding = 'async'
-          image.src = frameSrc(index, isMobile)
-          image.onload = () => {
-            if (loadTokenRef.current !== token) return
-            complete += 1
-            setLoaded(complete)
-            if (complete === total) {
-              framesRef.current = images
-              setReady(true)
+          images[index] = image
+        }
+        // Publish the array before the bytes arrive so a scrub can already draw
+        // whichever frames are ready.
+        framesRef.current = images
+        setLoaded(0)
+        setReady(false)
+        let complete = 0
+        const load = (index: number) =>
+          new Promise<void>((resolve) => {
+            const image = images[index]
+            const settle = () => {
+              if (loadTokenRef.current !== token) {
+                resolve()
+                return
+              }
+              complete += 1
+              if (complete % 4 === 0 || complete === total) setLoaded(complete)
+              resolve()
+            }
+            image.onload = settle
+            image.onerror = settle
+            image.src = frameSrc(index, set)
+          })
+        const run = async (queue: number[], concurrency: number) => {
+          let cursor = 0
+          const worker = async () => {
+            while (cursor < queue.length && loadTokenRef.current === token) {
+              const next = queue[cursor]
+              cursor += 1
+              await load(next)
             }
           }
-          image.onerror = () => {
-            if (loadTokenRef.current !== token) return
-            complete += 1
-            setLoaded(complete)
-          }
-          images.push(image)
+          await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker))
         }
+        const coarse: number[] = []
+        const stride = COARSE_STRIDE[set]
+        for (let index = 0; index < total; index += stride) coarse.push(index)
+        if (coarse[coarse.length - 1] !== total - 1) coarse.push(total - 1)
+        const coarseSet = new Set(coarse)
+        const fine: number[] = []
+        for (let index = 0; index < total; index += 1) if (!coarseSet.has(index)) fine.push(index)
+        void (async () => {
+          await run(coarse, COARSE_CONCURRENCY)
+          if (loadTokenRef.current !== token) return
+          setReady(true)
+          await run(fine, FINE_CONCURRENCY)
+        })()
       },
       { rootMargin: '120% 0px' },
     )
@@ -110,7 +154,7 @@ export default function FrameSequence() {
       observer.disconnect()
       loadTokenRef.current += 1
     }
-  }, [isMobile])
+  }, [frameSet])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -119,8 +163,25 @@ export default function FrameSequence() {
     if (!context) return
 
     const draw = (index: number) => {
-      const image = framesRef.current[index]
-      if (!image || !image.naturalWidth) return
+      const frames = framesRef.current
+      let image = frames[index]
+      if (!image || !image.naturalWidth) {
+        // Frames stream in coarse-to-fine, so while a scrub outruns the loader show
+        // the nearest frame that has arrived instead of freezing on an old one.
+        let bestIndex = -1
+        let bestDistance = Infinity
+        for (let candidate = 0; candidate < frames.length; candidate += 1) {
+          const other = frames[candidate]
+          if (!other || !other.naturalWidth) continue
+          const distance = Math.abs(candidate - index)
+          if (distance < bestDistance) {
+            bestDistance = distance
+            bestIndex = candidate
+          }
+        }
+        if (bestIndex < 0) return
+        image = frames[bestIndex]
+      }
       const dpr = Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2)
       const width = canvas.clientWidth
       const height = canvas.clientHeight
@@ -156,7 +217,7 @@ export default function FrameSequence() {
     if (!ready) return
     const section = sectionRef.current
     if (!section) return
-    const total = isMobile ? mobileFrames : desktopFrames
+    const total = framesIn(frameSet)
     // A breakpoint change rebuilds this trigger, so read the frame back from the
     // current scroll position instead of assuming the section starts at frame one.
     const progressAtCurrentScroll = () => {
@@ -202,7 +263,7 @@ export default function FrameSequence() {
       trigger.kill()
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     }
-  }, [isMobile, isReducedMotion, ready])
+  }, [frameSet, isReducedMotion, ready])
 
   // ScrollTrigger.refresh() parks the page at the top while it re-measures, and
   // every orientation/breakpoint change triggers one. Put the reader back where
@@ -270,7 +331,7 @@ export default function FrameSequence() {
     gsap.fromTo(track, { filter: 'blur(3px)' }, { filter: 'blur(0px)', duration: 0.55, ease: 'power2.out' })
   }, [stage])
 
-  const percentage = Math.round((loaded / (isMobile ? mobileFrames : desktopFrames)) * 100)
+  const percentage = Math.round((loaded / framesIn(frameSet)) * 100)
 
   return (
     <section ref={sectionRef} className="sequence" id="stages" aria-label="Этапы строительства дома">

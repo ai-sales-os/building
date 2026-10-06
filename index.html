@@ -6,6 +6,9 @@
     <meta name="theme-color" content="#211A14" />
     <meta name="description" content="Рублино — деревянные дома из цельного бревна. От эскиза до ключей." />
     <title>Рублино — деревянные дома</title>
+    <!-- First construction frame: start it before the bundle runs, matching the set the device will use. -->
+    <link rel="preload" as="image" href="/frames/mobile/frame_0001.webp" media="(max-width: 767px) and (orientation: landscape)" />
+    <link rel="preload" as="image" href="/frames/desktop/frame_0001.webp" media="(min-width: 768px)" />
   </head>
   <body>
     <div id="root"></div>
