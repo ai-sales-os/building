@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
+import { scrollPageTo } from '../lib/scroll'
 import '../index.css'
 
 gsap.registerPlugin(ScrollTrigger)
 
 const desktopFrames = 289
-const mobileFrames = 202
+const mobileFrames = 289
 
-// Mobile frames are synchronized by time, so the same progress thresholds apply.
+// The mobile set is a downscaled copy of the same render, so it shares the
+// desktop timeline and the same normalized progress thresholds.
 const stageBoundaries = [0, 22 / 289, 68 / 289, 140 / 289, 205 / 289, 1]
 const stageLabels = [
   { title: 'Пустой участок', detail: 'Разметка фундамента, экскаватор на площадке' },
@@ -46,6 +48,10 @@ export default function FrameSequence() {
   const drawRef = useRef<(index: number) => void>(() => undefined)
   const drumTrackRef = useRef<HTMLDivElement>(null)
   const drumStageRef = useRef(0)
+  const progressRef = useRef(0)
+  const snapshotRef = useRef<{ y: number; progress: number } | null>(null)
+  const restoreRafRef = useRef<number | null>(null)
+  const refreshAtRef = useRef(0)
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 767px)')
@@ -151,7 +157,18 @@ export default function FrameSequence() {
     const section = sectionRef.current
     if (!section) return
     const total = isMobile ? mobileFrames : desktopFrames
-    targetFrameRef.current = isReducedMotion ? total - 1 : 0
+    // A breakpoint change rebuilds this trigger, so read the frame back from the
+    // current scroll position instead of assuming the section starts at frame one.
+    const progressAtCurrentScroll = () => {
+      const span = section.offsetHeight - window.innerHeight
+      if (span <= 0) return 0
+      const rect = section.getBoundingClientRect()
+      return Math.min(1, Math.max(0, -rect.top / span))
+    }
+    const initialProgress = isReducedMotion ? 1 : progressAtCurrentScroll()
+    progressRef.current = initialProgress
+    targetFrameRef.current = Math.round(initialProgress * (total - 1))
+    setProgress(initialProgress)
     drawRef.current(targetFrameRef.current)
     if (isReducedMotion) return
 
@@ -161,7 +178,14 @@ export default function FrameSequence() {
       end: 'bottom bottom',
       scrub: true,
       onUpdate: (self) => {
+        // Skip the transient position ScrollTrigger applies while it re-measures.
+        if (refreshAtRef.current !== 0 && performance.now() - refreshAtRef.current < 250) return
+        // Mid-resize the trigger still measures the previous layout, so its progress
+        // is meaningless until the next refresh. Ignoring it keeps the last real
+        // reading, which is what the restore after the refresh relies on.
+        if (Math.abs(progressAtCurrentScroll() - self.progress) > 0.05) return
         const nextProgress = self.progress
+        progressRef.current = nextProgress
         setProgress(nextProgress)
         targetFrameRef.current = Math.round(nextProgress * (total - 1))
         if (rafRef.current === null) {
@@ -179,6 +203,51 @@ export default function FrameSequence() {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     }
   }, [isMobile, isReducedMotion, ready])
+
+  // ScrollTrigger.refresh() parks the page at the top while it re-measures, and
+  // every orientation/breakpoint change triggers one. Put the reader back where
+  // they were so the sequence keeps playing from the same stage.
+  useEffect(() => {
+    const onRefreshInit = () => {
+      refreshAtRef.current = performance.now()
+      // A refresh that already starts from the top must not erase a good snapshot,
+      // otherwise a second refresh in the same resize would restore nothing.
+      if (window.scrollY > 0) {
+        snapshotRef.current = { y: window.scrollY, progress: progressRef.current }
+      }
+    }
+    const onRefresh = () => {
+      if (restoreRafRef.current !== null) cancelAnimationFrame(restoreRafRef.current)
+      restoreRafRef.current = requestAnimationFrame(() => {
+        restoreRafRef.current = null
+        const snapshot = snapshotRef.current
+        if (!snapshot || snapshot.y <= 0) return
+        snapshotRef.current = null
+        if (Math.abs(window.scrollY - snapshot.y) <= 2) return
+        const section = sectionRef.current
+        let target = snapshot.y
+        if (section && snapshot.progress > 0.001 && snapshot.progress < 0.999) {
+          const span = section.offsetHeight - window.innerHeight
+          if (span > 0) {
+            const top = section.getBoundingClientRect().top + window.scrollY
+            target = top + snapshot.progress * span
+          }
+        }
+        target = Math.max(0, Math.min(target, ScrollTrigger.maxScroll(window)))
+        // Release the guard before moving, so the resulting update is not skipped.
+        refreshAtRef.current = 0
+        scrollPageTo(target)
+        ScrollTrigger.update()
+      })
+    }
+    ScrollTrigger.addEventListener('refreshInit', onRefreshInit)
+    ScrollTrigger.addEventListener('refresh', onRefresh)
+    return () => {
+      ScrollTrigger.removeEventListener('refreshInit', onRefreshInit)
+      ScrollTrigger.removeEventListener('refresh', onRefresh)
+      if (restoreRafRef.current !== null) cancelAnimationFrame(restoreRafRef.current)
+    }
+  }, [])
 
   const stage = stageForProgress(progress)
 
