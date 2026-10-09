@@ -369,6 +369,7 @@ export default function FrameSequence() {
   return (
     <section ref={sectionRef} className="sequence" id="stages" aria-label="Этапы строительства дома">
       <div className="sequence__sticky">
+        <div className="sequence__logs" aria-hidden="true" />
         <canvas ref={canvasRef} className="sequence__canvas" aria-hidden="true" />
         <div className="sequence__scrim" aria-hidden="true" />
         {!ready && (
@@ -379,24 +380,26 @@ export default function FrameSequence() {
             <div className="preloader__line"><span style={{ width: `${percentage}%` }} /></div>
           </div>
         )}
-        <div className={`sequence__copy sequence__copy--stage-${stage}`}>
-          <span className="eyebrow">Этап {String(stage + 1).padStart(2, '0')} / 05</span>
-          <h2 className="sr-only">{stageLabels[stage].title}</h2>
-          <div className="sequence__drum" aria-hidden="true">
-            <div className="sequence__drum-track" ref={drumTrackRef}>
-              {stageLabels.map((item) => (
-                <span key={item.title} className="sequence__drum-item">{item.title}</span>
-              ))}
+        <div className="sequence__panel">
+          <div className={`sequence__copy sequence__copy--stage-${stage}`}>
+            <span className="eyebrow">Этап {String(stage + 1).padStart(2, '0')} / 05</span>
+            <h2 className="sr-only">{stageLabels[stage].title}</h2>
+            <div className="sequence__drum" aria-hidden="true">
+              <div className="sequence__drum-track" ref={drumTrackRef}>
+                {stageLabels.map((item) => (
+                  <span key={item.title} className="sequence__drum-item">{item.title}</span>
+                ))}
+              </div>
             </div>
+            <p>{stageLabels[stage].detail}</p>
           </div>
-          <p>{stageLabels[stage].detail}</p>
+          <div className="sequence__progress" aria-label="Прогресс строительства">
+            {stageLabels.map((item, index) => (
+              <span key={item.title} className={index <= stage ? 'is-active' : ''} aria-label={item.title} />
+            ))}
+          </div>
+          <div className="sequence__hint">Листайте, чтобы увидеть весь путь</div>
         </div>
-        <div className="sequence__progress" aria-label="Прогресс строительства">
-          {stageLabels.map((item, index) => (
-            <span key={item.title} className={index <= stage ? 'is-active' : ''} aria-label={item.title} />
-          ))}
-        </div>
-        <div className="sequence__hint">Листайте, чтобы увидеть весь путь</div>
       </div>
     </section>
   )

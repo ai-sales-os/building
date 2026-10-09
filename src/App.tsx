@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import FrameSequence from './components/FrameSequence'
 import AdvantagesSection from './components/AdvantagesSection'
 import ProjectsCarousel from './components/ProjectsCarousel'
@@ -9,13 +9,40 @@ import './index.css'
 function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const shellRef = useRef<HTMLDivElement>(null)
+  const headerRef = useRef<HTMLElement>(null)
+
+  // The bar is pinned while the frame section still fills the viewport and released
+  // once it has scrolled past, so it leaves together with the first block instead of
+  // following the reader down the page. Desktop keeps the plain absolute header.
+  useEffect(() => {
+    const header = headerRef.current
+    const stages = document.getElementById('stages')
+    if (!header || !stages) return
+    const mobile = window.matchMedia('(max-width: 767px)')
+    let visible = stages.getBoundingClientRect().bottom > 0
+    const apply = () => {
+      header.classList.toggle('is-released', mobile.matches && !visible)
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      visible = Boolean(entry?.isIntersecting)
+      apply()
+    })
+    observer.observe(stages)
+    mobile.addEventListener('change', apply)
+    apply()
+    return () => {
+      observer.disconnect()
+      mobile.removeEventListener('change', apply)
+      header.classList.remove('is-released')
+    }
+  }, [])
 
   return (
     <div ref={shellRef} className="site-shell">
       <SmoothScroll />
       <MotionEffects scope={shellRef} />
       <div className="motion-scope">
-      <header className="site-header">
+      <header ref={headerRef} className="site-header">
         <a className="brand" data-magnetic="0.12" href="#top" aria-label="Рублино — на главную">
           <img className="brand__logo" src="/logo.webp" alt="" width="512" height="512" />
           <span className="brand__name">Рублино</span>
