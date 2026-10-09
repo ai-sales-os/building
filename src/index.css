@@ -40,6 +40,7 @@
   --color-wood-primary: #C48A4E;
   --color-wood-highlight: #E8BE85;
   --color-roof-dark: #2B2E36;
+  --color-forest-deep: #22372B;
   --color-sky-day: #A9D6F0;
   --color-sky-night: #0B1B33;
   --color-foliage: #3E6B3A;
@@ -123,8 +124,8 @@ button { cursor: pointer; }
 .button { align-items: center; border: 0; display: inline-flex; font-size: 13px; font-weight: 600; gap: 24px; justify-content: center; letter-spacing: .01em; padding: 14px 20px; transition: background var(--motion-duration-fast) var(--motion-ease), color var(--motion-duration-fast) var(--motion-ease), transform var(--motion-duration-fast) var(--motion-ease); will-change: transform; }
 .button:hover { transform: translateY(-2px) scale(1.01); }
 [data-magnetic] { will-change: transform; }
-.button--header { background: var(--color-accent); color: var(--color-cream); min-width: 160px; }
-.button--header:hover { background: var(--color-ink); }
+.button--header { background: var(--color-forest-deep); color: var(--color-cream); min-width: 160px; }
+.button--header:hover { background: #2E4A38; }
 .menu-toggle { background: transparent; border: 0; display: none; }
 
 .sequence { height: 800vh; position: relative; }
@@ -240,7 +241,7 @@ button { cursor: pointer; }
 .projects__progress span.is-active { background: var(--color-accent); transform: scaleY(2); }
 .projects__status { color: rgba(33, 26, 20, .56); font-size: 11px; margin: 16px 0 0; text-align: center; }
 
-.contact { background: var(--color-roof-dark); color: var(--color-cream); display: grid; gap: 10vw; grid-template-columns: 1.1fr .9fr; }
+.contact { background: var(--color-forest-deep); color: var(--color-cream); display: grid; gap: 10vw; grid-template-columns: 1.1fr .9fr; }
 .contact h2 { font-family: var(--font-display); font-size: clamp(42px, 5vw, 76px); font-weight: 500; letter-spacing: -.05em; line-height: 1; margin: 22px 0 28px; }
 .contact__copy p { color: rgba(251, 246, 238, .62); font-size: 16px; line-height: 1.65; max-width: 380px; }
 .contact .eyebrow { color: var(--color-wood-highlight); }
@@ -309,7 +310,7 @@ button { cursor: pointer; }
   .preloader__line span { background: var(--color-accent); }
   /* Stage copy, progress and hint share one dark-green panel under the band, so the
      type has to go light — the ink tokens it used on cream are unreadable here. */
-  .sequence__panel { background: #22372B; color: var(--color-cream); padding: 30px 24px 34px; width: 100%; }
+  .sequence__panel { background: var(--color-forest-deep); color: var(--color-cream); padding: 30px 24px 34px; width: 100%; }
   .sequence__copy { --sequence-drum-font: clamp(32px, 10vw, 44px); --sequence-drum-line: clamp(42px, 12vw, 54px); bottom: auto; color: var(--color-cream); left: auto; margin-top: 0; max-width: none; padding: 0; position: static; }
   .sequence__copy .eyebrow { color: var(--color-wood-highlight); font-size: 12px; }
   .sequence__copy p { color: rgba(251, 246, 238, .72); font-size: 14px; max-width: min(340px, calc(100vw - 48px)); }
@@ -355,7 +356,7 @@ button { cursor: pointer; }
   .projects__progress { flex-wrap: wrap; max-width: 260px; }
   .projects__status { margin-top: 14px; }
   /* Same green as the stage panel, so the page opens and closes on one colour. */
-  .contact { background: #22372B; }
+  .contact { background: var(--color-forest-deep); }
   .contact h2 { font-size: 48px; }
   .contact__details { margin-top: 56px; }
   .contact-person { padding: 20px 0; }
